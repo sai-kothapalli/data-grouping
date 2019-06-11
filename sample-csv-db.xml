@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:context="http://www.springframework.org/schema/context" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:ftp="http://www.mulesoft.org/schema/mule/ee/ftp" xmlns:file="http://www.mulesoft.org/schema/mule/file" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/ftp http://www.mulesoft.org/schema/mule/ee/ftp/current/mule-ftp-ee.xsd
+http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-current.xsd">
+    <db:mysql-config name="MySQL_Configuration" host="localhost" port="3306" user="admin" password="admin" database="test" doc:name="MySQL Configuration"/>
+    <context:property-placeholder location="/local.properties"/>
+    <flow name="sample-csv-dbFlow">
+        <file:inbound-endpoint path="${input.folder}" responseTimeout="10000" doc:name="File" moveToDirectory="${archive.folder}"/>
+        <dw:transform-message doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/csv
+---
+payload map ((accounts, indx) -> {
+	Account : accounts.Account,
+	Type: accounts.Type,
+	Amount: (accounts.Amount * -4) when accounts.Date as :date {format: 'M/d/yyyy'} < '5/30/2019' as :date {format: 'M/d/yyyy'} and accounts.Type == 'Happy'
+				otherwise (accounts.Amount * -0.5) when accounts.Date as :date {format: 'M/d/yyyy'} < '5/30/2019' as :date {format: 'M/d/yyyy'} and accounts.Type == 'Sad'
+				otherwise (accounts.Amount * 4) when accounts.Type == 'Happy'
+				otherwise (accounts.Amount * 0.5),
+	Date: accounts.Date		
+})]]></dw:set-payload>
+        </dw:transform-message>
+        <byte-array-to-object-transformer doc:name="Byte Array to Object"/>
+        <scatter-gather doc:name="Scatter-Gather">
+            <processor-chain>
+                <dw:transform-message doc:name="Transform Message" metadata:id="5ae32f22-1629-499f-b0ed-d6a9a146bedc">
+                    <dw:input-payload mimeType="application/csv"/>
+                    <dw:set-payload><![CDATA[%dw 1.0
+%output application/csv
+---
+payload groupBy ($.Account) map ((accounts, indx) -> {
+	AccountNmber : accounts[0].Account,
+	Amount: (accounts reduce ((value, acc = 0) ->
+		(acc + value.Amount))
+	)
+})]]></dw:set-payload>
+                </dw:transform-message>
+                <logger message="#[payload] to DB" level="INFO" doc:name="Logger"/>
+                <file:outbound-endpoint path="${output.folder}" outputPattern="datasummaryoutput_#[server.dateTime.format('yyyyMMddHHmmss')].csv" responseTimeout="10000" doc:name="File"/>
+            </processor-chain>
+            <processor-chain>
+                <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+                <file:outbound-endpoint path="${output.folder}" outputPattern="dataoutput_#[server.dateTime.format('yyyyMMddHHmmss')].csv" responseTimeout="10000" doc:name="File"/>
+            </processor-chain>
+        </scatter-gather>
+
+    </flow>
+</mule>
